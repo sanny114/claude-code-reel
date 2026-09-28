@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>Claude Code Reel</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-900-normal.woff2);font-weight:900}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-900-normal.woff2);font-weight:900;unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-700-normal.woff2);font-weight:700}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-700-normal.woff2);font-weight:700;unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-japanese-400-normal.woff2);font-weight:400}
+@font-face{font-family:JP;src:url(fonts/noto-sans-jp-latin-400-normal.woff2);font-weight:400;unicode-range:U+0000-00FF,U+2000-206F}
+@font-face{font-family:Anton;src:url(fonts/anton-latin-400-normal.woff2)}
+@font-face{font-family:Mono;src:url(fonts/jetbrains-mono-latin-500-normal.woff2);font-weight:500}
+@font-face{font-family:Mono;src:url(fonts/jetbrains-mono-latin-800-normal.woff2);font-weight:800}
+html,body{margin:0;background:#000;height:100%}
+body{display:grid;place-items:center}
+canvas{display:block;max-width:100vw;max-height:100vh;aspect-ratio:16/9}
+</style></head>
+<body><canvas id="c" width="1920" height="1080"></canvas>
+<script>
+/* Claude Code showreel, 15 s @ 120 BPM. Frame = pure function of t. Times follow 絵コンテ.md. */
+const W=1920,H=1080,CX=W/2,CY=H/2;
+const DUR=15.0, BPM=120, BEAT=60/BPM;
+const C={bg:'#141413',fg:'#F0EEE6',or:'#D97757',orD:'#8A4632',gr:'#7FB069',dim:'#6B6A64',panel:'#201F1C',eye:'#141413'};
+const FONTS=['900 40px JP','700 40px JP','400 40px JP','40px Anton','800 40px Mono','500 40px Mono'];
+const FONT_SAMPLE='デスクトップを整理して売上グラフにし議事録要約Webページ作っお礼メールの下書き書い画像資料動画新機能は月公開予算据え置き次回宛先山田さま件名本日打ち合わせほかにもいろあなた言葉で頼む手動かす仕事が進ターミナル働くエージェント保存しましたCLAUDE0123456789+%/、。>~';
+
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const mk=()=>{const c=document.createElement('canvas');c.width=W;c.height=H;return c};
+const bufA=mk();
+
+/* ---------- math ---------- */
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)),lerp=(a,b,t)=>a+(b-a)*t,prog=(t,a,b)=>clamp((t-a)/(b-a)),TAU=Math.PI*2;
+const E={
+ linear:t=>t,inQuad:t=>t*t,inCubic:t=>t*t*t,outCubic:t=>1-(1-t)**3,outQuart:t=>1-(1-t)**4,
+ outExpo:t=>t>=1?1:1-2**(-10*t),inExpo:t=>t<=0?0:2**(10*t-10),
+ inOutCubic:t=>t<.5?4*t*t*t:1-(-2*t+2)**3/2,
+ inOutExpo:t=>t<=0?0:t>=1?1:t<.5?2**(20*t-10)/2:(2-2**(-20*t+10))/2,
+ outBack:t=>{const c1=1.70158,c3=c1+1;return 1+c3*(t-1)**3+c1*(t-1)**2},
+ outElastic:t=>t<=0?0:t>=1?1:2**(-10*t)*Math.sin((t*10-.75)*TAU/3)+1,
+};
+const hash=n=>{const s=Math.sin(n*127.1+311.7)*43758.5453;return s-Math.floor(s)};
+const noise=x=>{const i=Math.floor(x),f=x-i,u=f*f*(3-2*f);return lerp(hash(i),hash(i+1),u)*2-1};
+
+const HITS=[[3.0,1],[3.5,.7],[4,.35],[5,.3],[6,.3],[7,.3],[8,.3],[9,.5],[10,.5],[11,.6],[13,.4]];
+const impact=t=>{let v=0;for(const[h,a]of HITS){const d=t-h;if(d>=0&&d<.5)v=Math.max(v,a*Math.exp(-d*12))}return v};
+
+/* ---------- text helpers ---------- */
+function txt(c,s,x,y,o={}){
+ c.save();c.globalAlpha*=o.alpha??1;c.font=o.font;c.textAlign=o.align||'left';c.textBaseline='alphabetic';
+ const ls=o.ls||0;c.letterSpacing=ls+'px';if(o.align==='center')x+=ls/2;
+ c.fillStyle=o.fill||C.fg;c.fillText(s,x,y);c.restore();
+}
+function tw(c,s,font,ls=0){c.save();c.font=font;c.letterSpacing=ls+'px';const w=c.measureText(s).width-ls;c.restore();return w}
+function maskedWord(c,word,cx,base,font,t0,t,{stagger=.04,dur=.35,ls=4,col=C.fg,ease=E.outExpo,cols=null}={}){
+ c.save();c.font=font;c.letterSpacing='0px';
+ const ch=[...word],ws=ch.map(x=>c.measureText(x).width+ls),tot=ws.reduce((a,b)=>a+b,0)-ls;
+ const m=c.measureText(word),asc=m.actualBoundingBoxAscent,desc=m.actualBoundingBoxDescent;
+ let x=cx-tot/2;
+ ch.forEach((s,i)=>{const p=prog(t,t0+i*stagger,t0+i*stagger+dur);
+  if(p>0){c.save();c.beginPath();c.rect(x-10,base-asc-24,ws[i]+20,asc+desc+34);c.clip();
+   c.fillStyle=cols?cols[i]:col;c.fillText(s,x,base+(1-ease(p))*(asc+desc+34));c.restore()}
+  x+=ws[i]});
+ c.restore();return{tot,asc,desc};
+}
+function rrect(c,x,y,w,h,r){c.beginPath();c.roundRect(x,y,w,h,r)}
+
+/* ---------- mascot (original pixel critter) ---------- */
+const MASCOT=[
+"..#########..",
+"..#########..",
+"..##e###e##..",
+"..##e###e##..",
+"#############",
+"#############",
+"..#########..",
+"..#.#...#.#..",
+"..#.#...#.#.."];
+// x, yb = bottom centre. o.walk: step index (legs alternate). o.sx/o.sy: squash.
+function mascot(c,x,yb,cell,o={}){
+ const sx=o.sx??1,sy=o.sy??1,blink=o.blink??false,walk=o.walk;
+ c.save();c.translate(x,yb);c.scale(sx,sy);c.globalAlpha*=o.alpha??1;
+ for(let r=0;r<9;r++)for(let k=0;k<13;k++){
+  let ch=MASCOT[r][k];if(ch==='.')continue;
+  if(walk!==undefined&&r===8){const pair=(k===2||k===8)?0:1;if(pair===Math.floor(walk)%2)continue}
+  if(ch==='e'){c.fillStyle=(blink&&r===2)?C.or:C.eye}else c.fillStyle=C.or;
+  c.fillRect((k-6.5)*cell-.5,(r-9)*cell-.5,cell+1,cell+1);
+ }
+ c.restore();
+}
+const blinkAt=t=>(t%2.3)>2.2;
+// hop once per beat, landing on the beat with a squash
+function hop(t,h){const ph=((t%BEAT)+BEAT)%BEAT/BEAT;const y=-4*ph*(1-ph)*h;const s=ph<.18?.22*(1-ph/.18):0;return{y,sx:1+s,sy:1-s}}
+
+/* ---------- scene 0: terminal typing (0–3.0) ---------- */
+const REQ0='デスクトップを整理して';
+const OP={font:'700 80px JP',pre:'800 80px Mono'};
+function opLayout(c){
+ const pw=tw(c,'> ',OP.pre),fw=tw(c,REQ0,OP.font),x0=CX-(pw+fw+60)/2;
+ return{pw,fw,x0,base:CY+28};
+}
+function sceneOpen(c,t){
+ c.fillStyle=C.bg;c.fillRect(0,0,W,H);
+ txt(c,'claude  ~/Desktop',80,90,{font:'500 28px Mono',fill:C.dim});
+ const L=opLayout(c);
+ const k=lerp(1,1.12,E.inOutCubic(prog(t,1,3)));
+ c.save();c.translate(CX,CY);c.scale(k,k);c.translate(-CX,-CY);
+ txt(c,'>',L.x0,L.base,{font:OP.pre,fill:C.or});
+ const n=Math.floor(clamp((t-1.0)/.125+1,0,REQ0.length));
+ const s=[...REQ0].slice(0,n).join('');
+ txt(c,s,L.x0+L.pw,L.base,{font:OP.font});
+ const cx=L.x0+L.pw+tw(c,s,OP.font)+14;
+ const typing=t>=1&&t<2.45;
+ const on=typing||t>=2.75||((t%BEAT)<.3);
+ let cw=44,ch=100;const sq=E.outCubic(prog(t,2.75,3.0));cw*=1+.5*sq;ch*=1-.35*sq;
+ if(on){c.fillStyle=C.or;c.fillRect(cx,L.base-78+(100-ch)/2,cw,ch)}
+ c.restore();
+ return{x:CX+(cx-CX)*k,y:CY+(L.base-78+(100-ch)/2-CY)*k,w:cw*k,h:ch*k};
+}
+
+/* ---------- scene 1: title + mascot birth (3.0–4.0) ---------- */
+const TITLE_M={x:CX,yb:CY+350,cell:20};
+function sceneTitle(c,t){
+ c.fillStyle=C.bg;c.fillRect(0,0,W,H);
+ const p=E.outBack(prog(t,3.5,3.75)),a=prog(t,3.5,3.56);
+ if(a>0){c.save();c.translate(CX,CY-20);const s=lerp(1.7,1,p);c.scale(s,s);
+  txt(c,'CLAUDE CODE',0,0,{font:'230px Anton',align:'center',ls:lerp(60,14,E.outExpo(prog(t,3.5,3.9))),alpha:a});c.restore()}
+ maskedWord(c,'ターミナルで働くAI',CX,CY+90,'700 52px JP',3.5,t,{stagger:.015,dur:.25,ls:6});
+}
+function mascotTitle(c,t){
+ const cell=TITLE_M.cell;
+ if(t<3.45){ // orange block shrinking into the body
+  const p=E.inOutCubic(prog(t,3.25,3.45));
+  const bx=TITLE_M.x-6.5*cell,by=TITLE_M.yb-9*cell,bw=13*cell,bh=7*cell;
+  c.fillStyle=C.or;c.fillRect(lerp(-20,bx,p),lerp(-20,by,p),lerp(W+40,bw,p),lerp(H+40,bh,p));return;
+ }
+ const d=t-3.45,s=.28*Math.exp(-d*7)*Math.cos(d*26);
+ mascot(c,TITLE_M.x,TITLE_M.yb,cell,{sx:1+s,sy:1-s,blink:t>3.8&&t<3.86});
+}
+
+/* ---------- task scenes (4.0–9.0) ---------- */
+const TASKS=['デスクトップを整理して','売上をグラフにして','議事録を要約して','Webページを作って','お礼メールの下書きを書いて'];
+function taskFrame(c,i,lt){
+ c.fillStyle=C.bg;c.fillRect(0,0,W,H);
+ c.fillStyle='rgba(240,238,230,.05)';for(let y=30;y<H;y+=60)for(let x=30;x<W;x+=60)c.fillRect(x-2,y-2,4,4);
+ txt(c,'0'+(i+1),140,165,{font:'800 44px Mono',fill:C.or});
+ txt(c,'/05',140+tw(c,'0'+(i+1),'800 44px Mono')+6,165,{font:'500 44px Mono',fill:C.dim});
+ const req=TASKS[i],n=Math.floor(clamp(lt/.28,0,1)*[...req].length+.001);
+ const s=[...req].slice(0,n).join('');
+ txt(c,'>',140,262,{font:'800 64px Mono',fill:C.or});
+ txt(c,s,140+tw(c,'> ','800 64px Mono'),262,{font:'700 64px JP'});
+ if(lt<.3||(lt%.25)<.15){c.fillStyle=C.or;c.fillRect(140+tw(c,'> ','800 64px Mono')+tw(c,s,'700 64px JP')+10,202,30,72)}
+ [taskDesk,taskChart,taskSum,taskWeb,taskMail][i](c,lt);
+}
+function fileIcon(c,x,y,kind,rot,sc){
+ c.save();c.translate(x,y);c.rotate(rot);c.scale(sc,sc);
+ c.fillStyle=C.fg;rrect(c,-38,-48,76,96,8);c.fill();
+ c.fillStyle=[C.or,'#9C9A92',C.gr][kind];c.fillRect(-38,-48,76,26);
+ c.fillStyle='#C9C6BC';for(let l=0;l<3;l++)c.fillRect(-26,-10+l*16,52-l*12,6);
+ c.restore();
+}
+function taskDesk(c,lt){
+ const FX=[CX-400,CX,CX+400],FY=860,names=['画像','資料','動画'];
+ const bump=[0,0,0];const files=[];
+ for(let i=0;i<14;i++){
+  const kind=i%3,sx=lerp(420,1500,hash(i*3.1)),sy=lerp(430,680,hash(i*7.7)),rot=(hash(i*1.3)-.5)*.9;
+  const p=prog(lt,.3+i*.025,.3+i*.025+.28),e=E.inOutCubic(p);
+  if(p>=1){bump[kind]=Math.max(bump[kind],Math.exp(-(lt-(.58+i*.025))*14));continue}
+  const x=lerp(sx,FX[kind],e),y=lerp(sy,FY-40,e)-90*Math.sin(p*Math.PI);
+  files.push([x,y,kind,rot*(1-e),lerp(1,.55,e)]);
+ }
+ for(let k=0;k<3;k++){
+  const b=bump[k]*.12;c.save();c.translate(FX[k],FY+60);c.scale(1+b,1-b);
+  c.fillStyle=C.orD;rrect(c,-120,-130,90,30,8);c.fill();
+  c.fillStyle=C.or;rrect(c,-120,-110,240,130,12);c.fill();c.restore();
+  txt(c,names[k],FX[k],FY+130,{font:'700 36px JP',align:'center'});
+ }
+ for(const f of files)fileIcon(c,...f);
+}
+function taskChart(c,lt){
+ const base=900,x0=560,hs=[170,220,200,290,350,450],mo=['4月','5月','6月','7月','8月','9月'];
+ c.fillStyle=C.dim;c.fillRect(x0-30,base,860,4);
+ hs.forEach((h,i)=>{const p=E.outBack(prog(lt,.22+i*.05,.22+i*.05+.3));const x=x0+i*135;
+  c.fillStyle=i===5?C.or:C.fg;c.globalAlpha=i===5?1:.85;c.fillRect(x,base-h*p,90,h*p);c.globalAlpha=1;
+  txt(c,mo[i],x+45,base+46,{font:'400 28px JP',align:'center',fill:C.dim})});
+ const q=prog(lt,.62,.85);
+ if(q>0){c.save();c.translate(1460,470);const s=E.outBack(q);c.scale(s,s);txt(c,'+32%',0,0,{font:'150px Anton',align:'center',fill:C.or});c.restore()}
+}
+function taskSum(c,lt){
+ c.fillStyle=C.fg;rrect(c,380,360,460,560,16);c.fill();
+ const mv=prog(lt,.28,.62);
+ for(let l=0;l<12;l++){const w=lerp(200,400,hash(l*5.3)),y=410+l*42;
+  const p=E.inOutCubic(clamp(mv*1.6-l*.05));
+  c.fillStyle='#B7B4AA';c.globalAlpha=lerp(1,.3,clamp(p*2));c.fillRect(410,y,w,12);c.globalAlpha=1;
+  if(p<=0||p>=1)continue;
+  const ty=[520,600,680][l%3];c.globalAlpha=1-p;c.fillStyle=p>.3?C.or:'#B7B4AA';
+  c.fillRect(lerp(410,1120,p),lerp(y,ty,p),lerp(w,40,p),12);c.globalAlpha=1}
+ txt(c,'→',950,660,{font:'800 90px Mono',fill:C.or,align:'center'});
+ c.fillStyle=C.fg;rrect(c,1060,360,520,560,16);c.fill();
+ txt(c,'要点',1100,440,{font:'900 44px JP',fill:C.bg,alpha:prog(lt,.4,.5)});
+ const pts=['新機能は10月に公開','予算は据え置き','次回は10/15'];
+ pts.forEach((s,i)=>{const p=E.outExpo(prog(lt,.5+i*.08,.8+i*.08));if(p<=0)return;
+  c.save();c.beginPath();c.rect(1090,470+i*95,470,80);c.clip();
+  const y=540+i*95+(1-p)*80;c.fillStyle=C.or;c.fillRect(1100,y-30,14,14);
+  txt(c,s,1130,y-12,{font:'700 38px JP',fill:C.bg});c.restore()});
+}
+function taskWeb(c,lt){
+ const X=560,Y=350,Wd=800,Hd=580;
+ c.fillStyle=C.panel;rrect(c,X,Y,Wd,Hd,18);c.fill();c.strokeStyle='rgba(240,238,230,.3)';c.lineWidth=3;c.stroke();
+ ['#E0685F','#E8B34F',C.gr].forEach((col,i)=>{c.fillStyle=col;c.beginPath();c.arc(X+36+i*30,Y+32,9,0,TAU);c.fill()});
+ c.fillStyle='rgba(240,238,230,.1)';rrect(c,X+140,Y+18,500,28,14);c.fill();
+ const parts=[[X+30,Y+70,Wd-60,60,C.or,.18],[X+30,Y+160,420,40,C.fg,.28],[X+30,Y+215,300,24,'#9C9A92',.33],[X+30,Y+260,160,54,C.or,.38],[X+500,Y+160,270,160,'#3A3833',.3],
+  [X+30,Y+350,230,190,C.fg,.46],[X+285,Y+350,230,190,C.fg,.52],[X+540,Y+350,230,190,C.fg,.58]];
+ for(const[x,y,w,h,col,t0]of parts){const p=prog(lt,t0,t0+.2);if(p<=0)continue;
+  const e=E.outBack(p),dy=(1-e)*-90,land=p>.55?.12*Math.exp(-(p-.55)*10)*Math.sin((p-.55)*30):0;
+  c.save();c.translate(x+w/2,y+h+dy);c.scale(1+land,1-land);c.globalAlpha=Math.min(1,p*4);
+  c.fillStyle=col;rrect(c,-w/2,-h,w,h,8);c.fill();c.restore()}
+}
+function taskMail(c,lt){
+ const X=560,Y=350,Wd=800,Hd=580;
+ c.fillStyle=C.fg;rrect(c,X,Y,Wd,Hd,18);c.fill();
+ c.fillStyle='#E4E1D6';rrect(c,X,Y,Wd,70,[18,18,0,0]);c.fill();
+ txt(c,'新規メッセージ',X+30,Y+46,{font:'700 30px JP',fill:C.bg});
+ const lines=[['宛先：山田さま',.2],['件名：本日のお打ち合わせのお礼',.28]];
+ lines.forEach(([s,t0],i)=>{const n=Math.floor(prog(lt,t0,t0+.15)*[...s].length);
+  txt(c,[...s].slice(0,n).join(''),X+40,Y+130+i*62,{font:'700 32px JP',fill:C.bg});
+  c.fillStyle='#D8D5CA';c.fillRect(X+30,Y+150+i*62,Wd-60,2)});
+ for(let l=0;l<5;l++){const p=E.outExpo(prog(lt,.4+l*.04,.6+l*.04));c.fillStyle='#B7B4AA';c.fillRect(X+40,Y+270+l*48,(Wd-120-hash(l)*220)*p,12)}
+ const q=prog(lt,.62,.95);
+ if(q>0){const s=E.outElastic(q);c.save();c.translate(X+Wd-30,Y+Hd-30);c.scale(s,s);
+  c.fillStyle=C.gr;c.beginPath();c.arc(0,0,78,0,TAU);c.fill();
+  c.strokeStyle=C.fg;c.lineWidth=16;c.lineCap='round';c.lineJoin='round';c.beginPath();c.moveTo(-34,2);c.lineTo(-8,28);c.lineTo(38,-24);c.stroke();c.restore();
+  txt(c,'下書きを保存しました',X+Wd-130,Y+Hd-18,{font:'700 30px JP',fill:C.gr,align:'right',alpha:prog(lt,.7,.8)})}
+}
+// slash wipe: draw `next` inside a slanted band sweeping left -> right
+function slash(c,p,drawNext){
+ const e=E.inOutCubic(p),ex=lerp(-300,W+300,e);
+ c.save();c.beginPath();c.moveTo(-400,0);c.lineTo(ex+180,0);c.lineTo(ex-180,H);c.lineTo(-400,H);c.closePath();c.clip();drawNext(c);c.restore();
+ c.strokeStyle=C.or;c.lineWidth=18;c.beginPath();c.moveTo(ex+180,0);c.lineTo(ex-180,H);c.stroke();
+}
+const WIPE=.2;
+
+/* ---------- 9.0–10.0 tiles ---------- */
+const tileCache=[];
+function tileImg(i){if(!tileCache[i]){const b=mk();taskFrame(b.getContext('2d'),i,.99);tileCache[i]=b}return tileCache[i]}
+const TW=300,TH=169,TG=28,TX0=CX-(5*TW+4*TG)/2,TY=CY-250;
+function sceneTiles(c,t){
+ c.fillStyle=C.bg;c.fillRect(0,0,W,H);
+ for(let i=0;i<5;i++){
+  let x=TX0+i*(TW+TG),y=TY,w=TW,h=TH,a=1;
+  if(i===4){const p=E.outExpo(prog(t,9.0,9.35));x=lerp(0,x,p);y=lerp(0,y,p);w=lerp(W,w,p);h=lerp(H,h,p)}
+  else{const p=E.outBack(prog(t,9.1+i*.06,9.35+i*.06));if(p<=0)continue;const s=p;x+=w*(1-s)/2;y+=h*(1-s)/2;w*=s;h*=s}
+  c.save();rrect(c,x,y,w,h,lerp(0,12,Math.min(1,W/w/6)));c.clip();c.drawImage(tileImg(i),x,y,w,h);c.restore();
+  if(w<W*.5){c.strokeStyle='rgba(240,238,230,.3)';c.lineWidth=2;rrect(c,x,y,w,h,12);c.stroke()}
+ }
+ maskedWord(c,'ほかにも、いろいろ。',CX,CY+170,'900 110px JP',9.4,t,{stagger:.035,ls:6});
+}
+
+/* ---------- 10.0–12.5 statement ---------- */
+const LB=['Claudeが、','手を動かす','。'];
+function sceneWords(c,t){
+ c.fillStyle=C.bg;c.fillRect(0,0,W,H);
+ const out=E.inExpo(prog(t,12.0,12.3));
+ c.save();c.translate(CX,CY);c.scale(1-out,1-out);c.translate(-CX,-CY);
+ const up=E.outExpo(prog(t,11.0,11.3));
+ const ya=lerp(CY+45,CY-95,up);
+ maskedWord(c,'あなたは、言葉で頼む。',CX,ya,'900 120px JP',10.0,t,{stagger:.03,ls:4});
+ if(t>=11.0){
+  const p=E.outExpo(prog(t,11.0,11.35)),skew=(1-p)*-.35,dx=(1-p)*W*.7;
+  const font='900 120px JP',ws=LB.map(s=>tw(c,s,font,4)+4),tot=ws.reduce((a,b)=>a+b)-4;
+  c.save();c.translate(dx,0);c.transform(1,0,skew,1,0,0);
+  let x=CX-tot/2+ (CY+175)*-skew*0;
+  const sh=lerp(0,6,E.outBack(prog(t,11.2,11.45)));
+  LB.forEach((s,i)=>{txt(c,s,x+sh,CY+175+sh,{font,ls:4,fill:'#3A3833'});
+   txt(c,s,x,CY+175,{font,ls:4,fill:i===1?C.or:C.fg});x+=ws[i]});
+  c.restore();
+ }
+ c.restore();
+}
+
+/* ---------- 12.0–15.0 end card ---------- */
+const END={font:'800 120px Mono',base:CY-10};
+function endLayout(c){const full='> Claude Code',w=tw(c,full,END.font);const x0=CX-(w+80)/2;return{x0,w,cursorX:x0+w+20}}
+function sceneEnd(c,t){
+ const L=endLayout(c);
+ // dot flies from centre and stretches into the cursor
+ if(t<12.5){const p=E.inOutCubic(prog(t,12.2,12.5));if(t<12.2)return;
+  const x=lerp(CX,L.x0+tw(c,'>',END.font)+50,p),y=lerp(CY,END.base-44,p),st=Math.sin(p*Math.PI);
+  c.fillStyle=C.or;c.beginPath();c.ellipse(x,y,lerp(16,30,p)*(1+st*.8),lerp(16,50,p)*(1-st*.4),0,0,TAU);c.fill();return}
+ const full='> Claude Code',n=Math.floor(clamp((t-12.5)/.0625+1,0,full.length));
+ const s=full.slice(0,n);
+ txt(c,'>',L.x0,END.base,{font:END.font,fill:C.or});
+ txt(c,s.slice(1),L.x0+tw(c,'>',END.font),END.base,{font:END.font});
+ const cx=n<full.length?L.x0+tw(c,s,END.font)+20:L.cursorX;
+ if(t<13.3||(t%BEAT)<.3){c.fillStyle=C.or;c.fillRect(cx,END.base-94,60,110)}
+ maskedWord(c,'言葉で頼めば、仕事が進む。',CX,CY+150,'900 84px JP',13.25,t,{stagger:.025,ls:4});
+ txt(c,'ターミナルで働くAIエージェント',CX,CY+245,{font:'400 36px JP',align:'center',fill:C.dim,ls:lerp(24,8,E.outExpo(prog(t,13.5,14))),alpha:prog(t,13.5,13.75)});
+}
+function endMascotPos(c){const L=endLayout(c);return{x:L.x0+L.w-150,yb:END.base-96}}
+
+/* ---------- mascot track (drawn on top) ---------- */
+const CORNER={x:W-190,yb:H-70,cell:11};
+function mascotTrack(c,t){
+ if(t<3.25)return;
+ if(t<4.0){mascotTitle(c,t);return}
+ if(t<10.0){
+  const p=E.outCubic(prog(t,4.0,4.35));
+  const x=lerp(TITLE_M.x,CORNER.x,p),yb=lerp(TITLE_M.yb,CORNER.yb,p)-Math.sin(p*Math.PI)*220,cell=lerp(TITLE_M.cell,CORNER.cell,p);
+  const hp=p<1?{y:0,sx:1,sy:1}:hop(t,34);
+  mascot(c,x,yb+hp.y,cell,{sx:hp.sx,sy:hp.sy,blink:blinkAt(t)});return;
+ }
+ if(t>=11.0&&t<12.1){const p=prog(t,11.0,12.1);const step=(t-11)/.0625;
+  mascot(c,lerp(-160,W+160,p),H-80-Math.abs(Math.sin(step*Math.PI/2))*10,13,{walk:step});return}
+ if(t>=12.5){const P=endMascotPos(c);const p=prog(t,12.5,13.0);
+  if(p<1){const e=E.linear(p);mascot(c,lerp(W+120,P.x,E.outCubic(p)),lerp(H-80,P.yb,e)-Math.sin(p*Math.PI)*320,9,{sx:.9,sy:1.12});return}
+  const d=t-13,s=.3*Math.exp(-d*8)*Math.cos(d*24);mascot(c,P.x,P.yb,9,{sx:1+s,sy:1-s,blink:t>14.1&&t<14.18})}
+}
+
+/* ============================================================ */
+function compose(c,t){
+ if(t<3.0){sceneOpen(c,t)}
+ else if(t<3.25){const r=sceneOpen(c,2.999),p=E.outExpo(prog(t,3.0,3.22));
+  c.fillStyle=C.or;c.fillRect(lerp(r.x,-20,p),lerp(r.y,-20,p),lerp(r.w,W+40,p),lerp(r.h,H+40,p))}
+ else if(t<4.0){sceneTitle(c,t)}
+ else if(t<9.0){const i=Math.floor(t-4),lt=t-4-i;
+  if(lt<WIPE){if(i===0)sceneTitle(c,t);else taskFrame(c,i-1,.99);slash(c,lt/WIPE,cc=>taskFrame(cc,i,lt))}
+  else taskFrame(c,i,lt)}
+ else if(t<10.0){sceneTiles(c,t)}
+ else if(t<12.5){sceneWords(c,t);sceneEnd(c,t)}
+ else{c.fillStyle=C.bg;c.fillRect(0,0,W,H);sceneEnd(c,t)}
+ mascotTrack(c,t);
+}
+
+function render(t){
+ const a=bufA.getContext('2d');a.save();compose(a,t);a.restore();
+ const imp=impact(t),sh=imp*12,dx=noise(t*40)*sh,dy=noise(t*40+50)*sh,z=1+imp*.02;
+ ctx.save();ctx.fillStyle=C.bg;ctx.fillRect(0,0,W,H);ctx.translate(CX+dx,CY+dy);ctx.scale(z,z);ctx.drawImage(bufA,-CX,-CY);ctx.restore();
+ // vignette
+ const g=ctx.createRadialGradient(CX,CY,H*.45,CX,CY,H*1.05);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+}
+
+window.ready=(async()=>{await Promise.all(FONTS.map(f=>document.fonts.load(f,FONT_SAMPLE)));return true})();
+window.renderAt=t=>render(t);
+if(!location.search.includes('render')){
+ window.ready.then(()=>{
+  const audio=new Audio('audio.wav');audio.loop=true;let t0=performance.now();
+  const go=()=>{t0=performance.now();audio.currentTime=0;audio.play().catch(()=>{})};
+  cv.addEventListener('click',go);go();
+  const loop=()=>{requestAnimationFrame(loop);
+   const clock=!audio.paused&&audio.currentTime>0?audio.currentTime:(performance.now()-t0)/1000;
+   render(((clock%DUR)+DUR)%DUR)};
+  requestAnimationFrame(loop);
+ });
+}
+</script></body></html>
